@@ -57,7 +57,20 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'image/jpeg' });
       res.end(image);
 
+    } else if (method === 'PUT') {
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', async () => {
+        const buffer = Buffer.concat(chunks);
+        await fs.writeFile(filePath, buffer);
+        res.writeHead(201, { 'Content-Type': 'text/plain' });
+        res.end('Image saved');
+      });
+    } else {
+      res.writeHead(405, { 'Content-Type': 'text/plain' });
+      res.end('Method not allowed');
     }
+
   } catch (err) {
     res.writeHead(500, { 'Content-Type': 'text/plain' });
     res.end('Internal server error');
