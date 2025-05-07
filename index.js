@@ -66,6 +66,12 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(201, { 'Content-Type': 'text/plain' });
         res.end('Image saved');
       });
+
+    } else if (method === 'DELETE') {
+      await fs.unlink(filePath);
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('Image deleted');
+
     } else {
       res.writeHead(405, { 'Content-Type': 'text/plain' });
       res.end('Method not allowed');
