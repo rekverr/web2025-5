@@ -1,88 +1,89 @@
-const http = require('http');
-const fs = require('fs').promises;
-const path = require('path');
-const { program } = require('commander');
-const superagent = require('superagent');
+const http = require("http");
+const fs = require("fs");
+const fsPromises = require("fs").promises;
+const path = require("path");
+const { program } = require("commander");
+const superagent = require("superagent");
 
 program
-  .requiredOption('-h, --host <host>', 'server address')
-  .requiredOption('-p, --port <port>', 'server port')
-  .requiredOption('-c, --cache <cache>', 'path to cache directory')
-  .parse(process.argv);
+  .requiredOption("-h, --host <host>", "Server host")
+  .requiredOption("-p, --port <port>", "Server port")
+  .requiredOption("-c, --cache <dir>", "Cache directory");
 
+program.parse(process.argv);
 const { host, port, cache } = program.opts();
 
-fs.mkdir(cache, { recursive: true }).catch(console.error);
+if (!fs.existsSync(cache)) {
+  fs.mkdirSync(cache, { recursive: true });
+}
 
-const getCachedImagePath = (code) => path.join(cache, `${code}.jpg`);
+const getImagePath = (code) => path.join(cache, `${code}.jpg`);
 
-const fetchFromHttpCat = async (code, filePath) => {
-  const url = `https://http.cat/${code}.jpg`;
+const requestHandler = async (req, res) => {
+  const method = req.method;
+  const urlCode = req.url.slice(1);
 
-  try {
-    const response = await superagent.get(url).responseType('blob');
-    await fs.writeFile(filePath, response.body);
-    return response.body;
-  } catch (err) {
-    return null;
+  // Перевірка на формат HTTP-коду (тільки 3 цифри)
+  if (!/^\d{3}$/.test(urlCode)) {
+    res.writeHead(400);
+    return res.end("Invalid HTTP status code");
+  }
+
+  const filePath = getImagePath(urlCode);
+
+  switch (method) {
+    case "GET":
+      try {
+        const data = await fsPromises.readFile(filePath);
+        res.writeHead(200, { "Content-Type": "image/jpeg" });
+        return res.end(data);
+      } catch {
+        try {
+          const catRes = await superagent.get(`https://http.cat/${urlCode}`);
+          await fsPromises.writeFile(filePath, catRes.body);
+          res.writeHead(200, { "Content-Type": "image/jpeg" });
+          res.end(catRes.body);
+        } catch {
+          res.writeHead(404);
+          res.end("Not Found");
+        }
+      }
+      break;
+
+    case "PUT":
+      const buffers = [];
+      req.on("data", (chunk) => buffers.push(chunk));
+      req.on("end", async () => {
+        try {
+          const data = Buffer.concat(buffers);
+          await fsPromises.writeFile(filePath, data);
+          res.writeHead(201);
+          res.end("Created");
+        } catch {
+          res.writeHead(500);
+          res.end("Failed to write file");
+        }
+      });
+      break;
+
+    case "DELETE":
+      try {
+        await fsPromises.unlink(filePath);
+        res.writeHead(200);
+        res.end("Deleted");
+      } catch {
+        res.writeHead(404);
+        res.end("Not Found");
+      }
+      break;
+
+    default:
+      res.writeHead(405);
+      res.end("Method Not Allowed");
   }
 };
 
-const server = http.createServer(async (req, res) => {
-  const method = req.method;
-  const urlParts = req.url.split('/');
-  const code = urlParts[1];
-
-  if (!code || isNaN(code)) {
-    res.writeHead(400, { 'Content-Type': 'text/plain' });
-    return res.end('Bad request: expected path /<http-status-code>');
-  }
-
-  const filePath = getCachedImagePath(code);
-
-  try {
-    if (method === 'GET') {
-      let image;
-
-      try {
-        image = await fs.readFile(filePath);
-      } catch {
-        image = await fetchFromHttpCat(code, filePath);
-        if (!image) {
-          res.writeHead(404, { 'Content-Type': 'text/plain' });
-          return res.end('Image not found');
-        }
-      }
-
-      res.writeHead(200, { 'Content-Type': 'image/jpeg' });
-      res.end(image);
-
-    } else if (method === 'PUT') {
-      const chunks = [];
-      req.on('data', chunk => chunks.push(chunk));
-      req.on('end', async () => {
-        const buffer = Buffer.concat(chunks);
-        await fs.writeFile(filePath, buffer);
-        res.writeHead(201, { 'Content-Type': 'text/plain' });
-        res.end('Image saved');
-      });
-
-    } else if (method === 'DELETE') {
-      await fs.unlink(filePath);
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('Image deleted');
-
-    } else {
-      res.writeHead(405, { 'Content-Type': 'text/plain' });
-      res.end('Method not allowed');
-    }
-
-  } catch (err) {
-    res.writeHead(500, { 'Content-Type': 'text/plain' });
-    res.end('Internal server error');
-  }
-});
-
+const server = http.createServer(requestHandler);
 server.listen(port, host, () => {
-  console.log(`Server is running at http://${host}:${port}`);
+  console.log(`Server running at http://${host}:${port}/`);
 });
